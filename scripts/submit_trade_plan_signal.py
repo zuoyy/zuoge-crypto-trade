@@ -22,6 +22,14 @@ def validate_enum(value: object, allowed: set[str], field: str, issues: list[str
         issues.append(f"{field} must be one of: {values}")
 
 
+def is_positive_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and value > 0
+
+
+def is_non_negative_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and value >= 0
+
+
 def validate(payload: dict) -> list[str]:
     issues = []
     required = [
@@ -69,6 +77,7 @@ def validate(payload: dict) -> list[str]:
         entry = trade_params.get("entry", {})
         exits = trade_params.get("exits", {})
         sizing = trade_params.get("sizing", {})
+        position_management = trade_params.get("position_management", {})
         constraints = trade_params.get("execution_constraints", {})
 
         trigger = entry.get("trigger", {})
@@ -78,28 +87,35 @@ def validate(payload: dict) -> list[str]:
             "entry.trigger.type",
             issues,
         )
-        if trigger.get("type") in {"touch_price", "breakout"} and trigger.get("trigger_price") is None:
+        if trigger.get("type") in {"touch_price", "breakout"} and not is_positive_number(trigger.get("trigger_price")):
             issues.append("entry.trigger.trigger_price is required for touch_price or breakout")
         if trigger.get("type") == "pullback_into_range":
             trigger_range = trigger.get("trigger_range")
-            if not isinstance(trigger_range, dict) or trigger_range.get("min") is None or trigger_range.get("max") is None:
+            if not isinstance(trigger_range, dict) or not is_positive_number(trigger_range.get("min")) or not is_positive_number(trigger_range.get("max")):
                 issues.append("entry.trigger.trigger_range is required for pullback_into_range")
+            elif trigger_range.get("min") >= trigger_range.get("max"):
+                issues.append("entry.trigger.trigger_range.min must be less than max")
 
         price = entry.get("price", {})
         validate_enum(price.get("order_type"), {"market", "limit"}, "entry.price.order_type", issues)
-        if price.get("order_type") == "limit" and price.get("limit_price") is None:
+        if price.get("order_type") == "limit" and not is_positive_number(price.get("limit_price")):
             issues.append("entry.price.limit_price is required when order_type is limit")
 
         acceptable_range = price.get("acceptable_range")
         if acceptable_range is not None:
-            if acceptable_range.get("min") is None or acceptable_range.get("max") is None:
-                issues.append("entry.price.acceptable_range.min and max are required when acceptable_range is present")
+            if not is_positive_number(acceptable_range.get("min")) or not is_positive_number(acceptable_range.get("max")):
+                issues.append("entry.price.acceptable_range.min and max must be greater than 0")
+            elif acceptable_range.get("min") >= acceptable_range.get("max"):
+                issues.append("entry.price.acceptable_range.min must be less than max")
+        timing = entry.get("timing", {})
+        if not isinstance(timing.get("expire_after_seconds"), int) or timing.get("expire_after_seconds") <= 0:
+            issues.append("entry.timing.expire_after_seconds must be greater than 0")
 
         stop_loss = exits.get("stop_loss", {})
         validate_enum(stop_loss.get("mode"), {"price", "percent", "none"}, "exits.stop_loss.mode", issues)
-        if stop_loss.get("mode") == "price" and stop_loss.get("stop_price") is None:
+        if stop_loss.get("mode") == "price" and not is_positive_number(stop_loss.get("stop_price")):
             issues.append("exits.stop_loss.stop_price is required when mode is price")
-        if stop_loss.get("mode") == "percent" and stop_loss.get("loss_pct") is None:
+        if stop_loss.get("mode") == "percent" and not is_positive_number(stop_loss.get("loss_pct")):
             issues.append("exits.stop_loss.loss_pct is required when mode is percent")
 
         take_profit = exits.get("take_profit", {})
@@ -113,6 +129,52 @@ def validate(payload: dict) -> list[str]:
             targets = take_profit.get("targets")
             if not isinstance(targets, list) or not targets:
                 issues.append("exits.take_profit.targets must contain at least one item when mode is fixed_price or ladder")
+            else:
+                total_close_ratio = 0.0
+                for idx, target in enumerate(targets):
+                    if not isinstance(target, dict):
+                        issues.append(f"exits.take_profit.targets[{idx}] must be an object")
+                        continue
+                    if not is_positive_number(target.get("price")):
+                        issues.append(f"exits.take_profit.targets[{idx}].price must be greater than 0")
+                    if not is_positive_number(target.get("close_ratio")):
+                        issues.append(f"exits.take_profit.targets[{idx}].close_ratio must be greater than 0")
+                    else:
+                        total_close_ratio += float(target.get("close_ratio"))
+                if take_profit.get("mode") == "fixed_price":
+                    if len(targets) != 1:
+                        issues.append("exits.take_profit.targets must contain exactly one item when mode is fixed_price")
+                    elif isinstance(targets[0], dict) and targets[0].get("close_ratio") != 1:
+                        issues.append("exits.take_profit.targets[0].close_ratio must be 1 when mode is fixed_price")
+                if take_profit.get("mode") == "ladder" and total_close_ratio > 1.0000001:
+                    issues.append("exits.take_profit.targets close_ratio sum must be less than or equal to 1")
+
+        trailing_stop = exits.get("trailing_stop", {})
+        if trailing_stop.get("enabled"):
+            validate_enum(
+                trailing_stop.get("activation_mode"),
+                {"immediate", "after_profit_pct", "after_tp_hit"},
+                "exits.trailing_stop.activation_mode",
+                issues,
+            )
+            validate_enum(
+                trailing_stop.get("trail_mode"),
+                {"percent", "price_delta"},
+                "exits.trailing_stop.trail_mode",
+                issues,
+            )
+            validate_enum(
+                trailing_stop.get("step_mode"),
+                {"continuous", "step"},
+                "exits.trailing_stop.step_mode",
+                issues,
+            )
+            if not is_positive_number(trailing_stop.get("trail_value")):
+                issues.append("exits.trailing_stop.trail_value must be greater than 0 when trailing_stop is enabled")
+            if trailing_stop.get("activation_mode") == "after_profit_pct" and not is_positive_number(trailing_stop.get("activation_profit_pct")):
+                issues.append("exits.trailing_stop.activation_profit_pct must be greater than 0 when activation_mode is after_profit_pct")
+            if trailing_stop.get("step_mode") == "step" and not is_positive_number(trailing_stop.get("step_value")):
+                issues.append("exits.trailing_stop.step_value must be greater than 0 when step_mode is step")
 
         if exits.get("time_stop", {}).get("enabled") and not exits.get("time_stop", {}).get("max_holding_minutes"):
             issues.append("exits.time_stop.max_holding_minutes is required when time_stop is enabled")
@@ -123,15 +185,43 @@ def validate(payload: dict) -> list[str]:
             "sizing.mode",
             issues,
         )
-        if sizing.get("mode") == "target_notional" and sizing.get("target_notional") is None:
+        if sizing.get("mode") == "target_notional" and not is_positive_number(sizing.get("target_notional")):
             issues.append("sizing.target_notional is required when mode is target_notional")
-        if sizing.get("mode") == "risk_budget" and sizing.get("target_risk_amount") is None:
+        if sizing.get("mode") == "risk_budget" and not is_positive_number(sizing.get("target_risk_amount")):
             issues.append("sizing.target_risk_amount is required when mode is risk_budget")
-        if sizing.get("mode") == "fixed_quantity" and sizing.get("target_quantity") is None:
+        if sizing.get("mode") == "risk_budget" and stop_loss.get("mode") == "none":
+            issues.append("sizing.target_risk_amount requires a stop loss when mode is risk_budget")
+        if sizing.get("mode") == "fixed_quantity" and not is_positive_number(sizing.get("target_quantity")):
             issues.append("sizing.target_quantity is required when mode is fixed_quantity")
+        if is_positive_number(sizing.get("min_notional")) and is_positive_number(sizing.get("max_notional")) and sizing.get("min_notional") > sizing.get("max_notional"):
+            issues.append("sizing.min_notional must be less than or equal to max_notional")
+        if is_positive_number(sizing.get("min_notional")) and is_positive_number(sizing.get("target_notional")) and sizing.get("min_notional") > sizing.get("target_notional"):
+            issues.append("sizing.min_notional must be less than or equal to target_notional")
+        if is_positive_number(sizing.get("min_quantity")) and is_positive_number(sizing.get("max_quantity")) and sizing.get("min_quantity") > sizing.get("max_quantity"):
+            issues.append("sizing.min_quantity must be less than or equal to max_quantity")
+        if is_positive_number(sizing.get("min_quantity")) and is_positive_number(sizing.get("target_quantity")) and sizing.get("min_quantity") > sizing.get("target_quantity"):
+            issues.append("sizing.min_quantity must be less than or equal to target_quantity")
+        if is_positive_number(sizing.get("target_notional")) and is_positive_number(sizing.get("max_notional")) and sizing.get("target_notional") > sizing.get("max_notional"):
+            issues.append("sizing.target_notional must be less than or equal to max_notional")
+        if is_positive_number(sizing.get("target_quantity")) and is_positive_number(sizing.get("max_quantity")) and sizing.get("target_quantity") > sizing.get("max_quantity"):
+            issues.append("sizing.target_quantity must be less than or equal to max_quantity")
 
-        if constraints.get("max_slippage_pct") is None and acceptable_range is None:
+        if constraints.get("max_slippage_pct") is not None and not is_non_negative_number(constraints.get("max_slippage_pct")):
+            issues.append("execution_constraints.max_slippage_pct must be greater than or equal to 0")
+        if constraints.get("min_reward_risk") is not None and not is_non_negative_number(constraints.get("min_reward_risk")):
+            issues.append("execution_constraints.min_reward_risk must be greater than or equal to 0")
+        if constraints.get("quote_staleness_seconds") is not None and (not isinstance(constraints.get("quote_staleness_seconds"), int) or constraints.get("quote_staleness_seconds") < 0):
+            issues.append("execution_constraints.quote_staleness_seconds must be greater than or equal to 0")
+        if not is_positive_number(constraints.get("max_slippage_pct")) and acceptable_range is None:
             issues.append("either entry.price.acceptable_range or execution_constraints.max_slippage_pct must be present")
+        if not position_management.get("allow_add_position", False) and position_management.get("max_add_count", 0) != 0:
+            issues.append("position_management.max_add_count must be 0 when allow_add_position is false")
+        if position_management.get("max_add_count", 0) < 0:
+            issues.append("position_management.max_add_count must be greater than or equal to 0")
+        if position_management.get("same_symbol_cooldown_minutes", 0) < 0:
+            issues.append("position_management.same_symbol_cooldown_minutes must be greater than or equal to 0")
+        if take_profit.get("mode") == "ladder" and not position_management.get("allow_partial_exit", False):
+            issues.append("position_management.allow_partial_exit must be true when take_profit.mode is ladder")
 
     return issues
 

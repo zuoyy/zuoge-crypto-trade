@@ -53,7 +53,9 @@
     },
     "sizing": {
       "mode": "risk_budget",
-      "target_risk_amount": 100
+      "target_risk_amount": 100,
+      "max_notional": 1000,
+      "allow_downsize": true
     },
     "position_management": {
       "allow_add_position": false,

@@ -201,7 +201,7 @@
     "entryParams": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["trigger", "price"],
+      "required": ["trigger", "price", "timing"],
       "properties": {
         "trigger": {
           "$ref": "#/$defs/entryTrigger"
@@ -228,7 +228,7 @@
         },
         "loss_pct": {
           "type": "number",
-          "minimum": 0
+          "exclusiveMinimum": 0
         }
       },
       "allOf": [
@@ -302,6 +302,37 @@
           "then": {
             "required": ["targets"]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "fixed_price"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/takeProfitTarget"
+                    },
+                    {
+                      "properties": {
+                        "close_ratio": {
+                          "const": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -312,8 +343,79 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "activation_mode": {
+          "type": "string",
+          "enum": ["immediate", "after_profit_pct", "after_tp_hit"]
+        },
+        "activation_profit_pct": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "trail_mode": {
+          "type": "string",
+          "enum": ["percent", "price_delta"]
+        },
+        "trail_value": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "step_mode": {
+          "type": "string",
+          "enum": ["continuous", "step"]
+        },
+        "step_value": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "move_to_break_even": {
+          "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": ["activation_mode", "trail_mode", "trail_value"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "activation_mode": {
+                "const": "after_profit_pct"
+              }
+            }
+          },
+          "then": {
+            "required": ["activation_profit_pct"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "step_mode": {
+                "const": "step"
+              }
+            }
+          },
+          "then": {
+            "required": ["step_value"]
+          }
+        }
+      ]
     },
     "timeStop": {
       "type": "object",
@@ -382,6 +484,25 @@
         "target_quantity": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "min_notional": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_notional": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "min_quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "allow_downsize": {
+          "type": "boolean"
         }
       },
       "allOf": [
