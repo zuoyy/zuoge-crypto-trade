@@ -1,0 +1,527 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zuoge.local/schemas/trade-plan-signal.schema.json",
+  "title": "TradePlanSignal",
+  "description": "Machine-readable contract for the zuoge-crypto-trade signal payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "skill_name",
+    "skill_version",
+    "symbol",
+    "side",
+    "confidence",
+    "signal_reason",
+    "evidence",
+    "created_at",
+    "expires_at",
+    "trade_params"
+  ],
+  "properties": {
+    "context_version": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "const": "Hermes"
+    },
+    "skill_name": {
+      "type": "string",
+      "const": "zuoge-crypto-trade"
+    },
+    "skill_version": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string",
+      "minLength": 1
+    },
+    "side": {
+      "type": "string",
+      "enum": ["long", "short"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "signal_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "position_intent": {
+      "type": "string",
+      "enum": ["open", "takeover", "reverse", "close"]
+    },
+    "replace_existing_position": {
+      "type": "boolean"
+    },
+    "takeover_reason": {
+      "type": "string"
+    },
+    "trade_params": {
+      "$ref": "#/$defs/tradeParams"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "position_intent": {
+            "const": "reverse"
+          }
+        },
+        "required": ["position_intent"]
+      },
+      "then": {
+        "properties": {
+          "replace_existing_position": {
+            "const": true
+          }
+        },
+        "required": ["replace_existing_position"]
+      }
+    }
+  ],
+  "$defs": {
+    "numericRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        }
+      }
+    },
+    "entryTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["immediate", "touch_price", "breakout", "pullback_into_range"]
+        },
+        "trigger_price": {
+          "type": "number"
+        },
+        "trigger_range": {
+          "$ref": "#/$defs/numericRange"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": ["touch_price", "breakout"]
+              }
+            }
+          },
+          "then": {
+            "required": ["trigger_price"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pullback_into_range"
+              }
+            }
+          },
+          "then": {
+            "required": ["trigger_range"]
+          }
+        }
+      ]
+    },
+    "entryPrice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order_type"],
+      "properties": {
+        "order_type": {
+          "type": "string",
+          "enum": ["market", "limit"]
+        },
+        "limit_price": {
+          "type": "number"
+        },
+        "acceptable_range": {
+          "$ref": "#/$defs/numericRange"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "order_type": {
+                "const": "limit"
+              }
+            }
+          },
+          "then": {
+            "required": ["limit_price"]
+          }
+        }
+      ]
+    },
+    "entryTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expire_after_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "entryParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger", "price"],
+      "properties": {
+        "trigger": {
+          "$ref": "#/$defs/entryTrigger"
+        },
+        "price": {
+          "$ref": "#/$defs/entryPrice"
+        },
+        "timing": {
+          "$ref": "#/$defs/entryTiming"
+        }
+      }
+    },
+    "stopLoss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["price", "percent", "none"]
+        },
+        "stop_price": {
+          "type": "number"
+        },
+        "loss_pct": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "price"
+              }
+            }
+          },
+          "then": {
+            "required": ["stop_price"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "percent"
+              }
+            }
+          },
+          "then": {
+            "required": ["loss_pct"]
+          }
+        }
+      ]
+    },
+    "takeProfitTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price", "close_ratio"],
+      "properties": {
+        "price": {
+          "type": "number"
+        },
+        "close_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "takeProfit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["fixed_price", "ladder", "none"]
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/takeProfitTarget"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": ["fixed_price", "ladder"]
+              }
+            }
+          },
+          "then": {
+            "required": ["targets"]
+          }
+        }
+      ]
+    },
+    "trailingStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "timeStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_holding_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": ["max_holding_minutes"]
+          }
+        }
+      ]
+    },
+    "exitParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stop_loss", "take_profit", "trailing_stop", "time_stop"],
+      "properties": {
+        "stop_loss": {
+          "$ref": "#/$defs/stopLoss"
+        },
+        "take_profit": {
+          "$ref": "#/$defs/takeProfit"
+        },
+        "trailing_stop": {
+          "$ref": "#/$defs/trailingStop"
+        },
+        "time_stop": {
+          "$ref": "#/$defs/timeStop"
+        }
+      }
+    },
+    "sizing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["target_notional", "risk_budget", "fixed_quantity"]
+        },
+        "target_notional": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "target_risk_amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "target_quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "target_notional"
+              }
+            }
+          },
+          "then": {
+            "required": ["target_notional"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "risk_budget"
+              }
+            }
+          },
+          "then": {
+            "required": ["target_risk_amount"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "fixed_quantity"
+              }
+            }
+          },
+          "then": {
+            "required": ["target_quantity"]
+          }
+        }
+      ]
+    },
+    "positionManagement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_add_position",
+        "max_add_count",
+        "allow_partial_exit",
+        "allow_reverse_on_opposite_signal",
+        "same_symbol_cooldown_minutes"
+      ],
+      "properties": {
+        "allow_add_position": {
+          "type": "boolean"
+        },
+        "max_add_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_partial_exit": {
+          "type": "boolean"
+        },
+        "allow_reverse_on_opposite_signal": {
+          "type": "boolean"
+        },
+        "same_symbol_cooldown_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "executionConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_slippage_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_reward_risk": {
+          "type": "number",
+          "minimum": 0
+        },
+        "quote_staleness_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "tradeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "exits",
+        "sizing",
+        "position_management",
+        "execution_constraints"
+      ],
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/entryParams"
+        },
+        "exits": {
+          "$ref": "#/$defs/exitParams"
+        },
+        "sizing": {
+          "$ref": "#/$defs/sizing"
+        },
+        "position_management": {
+          "$ref": "#/$defs/positionManagement"
+        },
+        "execution_constraints": {
+          "$ref": "#/$defs/executionConstraints"
+        }
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "entry": {
+                  "properties": {
+                    "price": {
+                      "required": ["acceptable_range"]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "execution_constraints": {
+                  "required": ["max_slippage_pct"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

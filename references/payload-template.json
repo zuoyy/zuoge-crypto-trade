@@ -1,0 +1,71 @@
+{
+  "source": "Hermes",
+  "skill_name": "zuoge-crypto-trade",
+  "skill_version": "1.0.0",
+  "symbol": "BTCUSDT",
+  "side": "long",
+  "confidence": 0.75,
+  "signal_reason": "请替换为简洁、可审计的中文理由",
+  "evidence": ["请替换为至少一条证据"],
+  "created_at": "2026-04-25T10:00:00Z",
+  "expires_at": "2026-04-25T10:15:00Z",
+  "position_intent": "open",
+  "replace_existing_position": false,
+  "trade_params": {
+    "entry": {
+      "trigger": {
+        "type": "breakout",
+        "trigger_price": 63520
+      },
+      "price": {
+        "order_type": "limit",
+        "limit_price": 63540,
+        "acceptable_range": {
+          "min": 63520,
+          "max": 63620
+        }
+      },
+      "timing": {
+        "expire_after_seconds": 900
+      }
+    },
+    "exits": {
+      "stop_loss": {
+        "mode": "percent",
+        "loss_pct": 0.02
+      },
+      "take_profit": {
+        "mode": "fixed_price",
+        "targets": [
+          {
+            "price": 64800,
+            "close_ratio": 1
+          }
+        ]
+      },
+      "trailing_stop": {
+        "enabled": false
+      },
+      "time_stop": {
+        "enabled": true,
+        "max_holding_minutes": 180
+      }
+    },
+    "sizing": {
+      "mode": "risk_budget",
+      "target_risk_amount": 100
+    },
+    "position_management": {
+      "allow_add_position": false,
+      "max_add_count": 0,
+      "allow_partial_exit": true,
+      "allow_reverse_on_opposite_signal": false,
+      "same_symbol_cooldown_minutes": 30
+    },
+    "execution_constraints": {
+      "max_slippage_pct": 0.003,
+      "min_reward_risk": 1.5,
+      "quote_staleness_seconds": 5
+    }
+  }
+}

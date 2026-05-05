@@ -1,0 +1,7 @@
+interface:
+  display_name: "Zuoge Crypto Trade Submit"
+  short_description: "Trading-context-aware signal submission"
+  default_prompt: "Use $zuoge-crypto-trade to compose, validate, and submit TradePlanSignal payloads. This skill is submission-first, not query-first. It should handle requests like generating a signal, validating a trade payload, or submitting a trade plan. You may read the latest trading context as input to position-intent and sizing decisions. Start with references/submit-quickstart.md. Only open references/enums.md, references/payload-template.json, or references/trade-plan-signal.schema.json when needed. Use references/ai-caller-guide.md as a fallback for edge cases. If the user only wants a Chinese account summary, position list, symbol status, or trading-context query reply, prefer $zuoge-crypto-query instead."
+
+policy:
+  allow_implicit_invocation: true
