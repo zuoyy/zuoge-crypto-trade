@@ -14,9 +14,10 @@ Do not use this file for plain account or position queries.
 
 1. Read the latest trading context.
 2. Read this file.
-3. Open `enums.md` only if you need exact enum literals.
-4. Open `payload-template.json` only if you need a starting shape.
-5. Open `trade-plan-signal.schema.json` only for final validation or unclear field requirements.
+3. Open `trade-plan-signal-parameter-design.md` when you need field meaning, account-aware intent rules, or examples.
+4. Open `enums.md` only if you need exact enum literals.
+5. Open `payload-template.json` only if you need a starting shape.
+6. Open `trade-plan-signal.schema.json` only for final validation or unclear field requirements.
 
 ## Minimal Trading Context
 
@@ -47,8 +48,11 @@ Need these fields at minimum:
 - `confidence` must be within `0..1`
 - `evidence` must contain at least one item
 - use UTC ISO 8601 timestamps
-- do not include `signal_id`, `proposal_id`, or `strategy_revision`
+- `expires_at` must be after `created_at` and still in the future at submission time
+- do not include `signal_id`, `proposal_id`, `trace_id`, `status`, `strategy_revision`, or `allowed_order_types`
 - `position_intent=reverse` requires `replace_existing_position=true`
+- include price protection through `trade_params.entry.price.acceptable_range` or positive `trade_params.execution_constraints.max_slippage_pct`
+- default to omitting `trade_params.margin`; if it is explicitly allowed, only `mode=cross` is valid
 
 ## Top-Level Payload
 
@@ -63,6 +67,20 @@ Need these fields at minimum:
 - `created_at`
 - `expires_at`
 - `trade_params`
+
+## Trade Params Checklist
+
+- `entry`: trigger, order type, price protection, and positive `expire_after_seconds`
+- `exits`: stop loss, take profit, trailing stop state, and time stop state
+- `sizing`: one mode and its matching target field
+- `position_management`: add-position policy, partial-exit policy, reverse policy, and cooldown minutes
+- `execution_constraints`: slippage, minimum reward/risk, and quote staleness limits
+
+## Directional Checks
+
+- long: price stop loss below entry reference price; take-profit prices above it
+- short: price stop loss above entry reference price; take-profit prices below it
+- ladder targets should ascend for long and descend for short
 
 ## Submit
 

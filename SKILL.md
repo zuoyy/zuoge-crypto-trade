@@ -22,6 +22,7 @@ Typical requests:
 
 Start with [references/submit-quickstart.md](references/submit-quickstart.md).
 Only open heavier references when needed:
+- [references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md)
 - [references/enums.md](references/enums.md)
 - [references/payload-template.json](references/payload-template.json)
 - [references/trade-plan-signal.schema.json](references/trade-plan-signal.schema.json)
@@ -48,6 +49,7 @@ If the symbol fails any filter above, reject or defer instead of forcing a signa
 
 Use `scripts/submit_trade_plan_signal.py` to submit the final payload.
 The helper script can fetch `/api/v1/agent/trading-context` and backfill `context_version` automatically.
+Run the helper before submission whenever possible; it performs local contract checks before sending the request.
 
 ## Candidate-to-Signal Workflow
 
@@ -75,6 +77,7 @@ Treat this as the isolated working area for crypto-trader signal automation. Pre
 ## Reference
 
 - [references/submit-quickstart.md](references/submit-quickstart.md)
+- [references/trade-plan-signal-parameter-design.md](references/trade-plan-signal-parameter-design.md) — AI-facing field-by-field payload guide aligned to the Go implementation
 - [references/ai-caller-guide.md](references/ai-caller-guide.md)
 - [references/trade-plan-signal.schema.json](references/trade-plan-signal.schema.json)
 - [references/payload-template.json](references/payload-template.json)

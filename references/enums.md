@@ -28,7 +28,11 @@ AI callers should prefer this file when deciding what literal values are allowed
 | `trade_params.entry.price.order_type` | `market`, `limit` | `limit` requires `limit_price`. |
 | `trade_params.exits.stop_loss.mode` | `price`, `percent`, `none` | `price` requires `stop_price`; `percent` requires `loss_pct`. |
 | `trade_params.exits.take_profit.mode` | `fixed_price`, `ladder`, `none` | When not `none`, provide at least one `targets` item. |
+| `trade_params.exits.trailing_stop.activation_mode` | `immediate`, `after_profit_pct`, `after_tp_hit` | Required when trailing stop is enabled. |
+| `trade_params.exits.trailing_stop.trail_mode` | `percent`, `price_delta` | Required when trailing stop is enabled. |
+| `trade_params.exits.trailing_stop.step_mode` | `continuous`, `step` | Optional; `step` requires `step_value`. |
 | `trade_params.sizing.mode` | `target_notional`, `risk_budget`, `fixed_quantity` | Requires one matching numeric target field. |
+| `trade_params.margin.mode` | `cross` | Omit `margin` by default. `isolated` is rejected by current backend validation. |
 
 ## Context Enums
 
@@ -47,11 +51,17 @@ AI callers should prefer this file when deciding what literal values are allowed
 - `trade_params.entry.price.order_type=limit` requires `trade_params.entry.price.limit_price`.
 - `trade_params.exits.stop_loss.mode=price` requires `trade_params.exits.stop_loss.stop_price`.
 - `trade_params.exits.stop_loss.mode=percent` requires `trade_params.exits.stop_loss.loss_pct`.
+- `trade_params.exits.take_profit.mode=fixed_price` requires exactly one target with `close_ratio=1`.
+- `trade_params.exits.take_profit.mode=ladder` requires `trade_params.position_management.allow_partial_exit=true`.
+- `trade_params.exits.trailing_stop.enabled=true` requires `trade_params.exits.trailing_stop.activation_mode`, `trade_params.exits.trailing_stop.trail_mode`, and `trade_params.exits.trailing_stop.trail_value`.
+- `trade_params.exits.trailing_stop.activation_mode=after_profit_pct` requires `trade_params.exits.trailing_stop.activation_profit_pct`.
+- `trade_params.exits.trailing_stop.step_mode=step` requires `trade_params.exits.trailing_stop.step_value`.
 - `trade_params.exits.time_stop.enabled=true` requires `trade_params.exits.time_stop.max_holding_minutes`.
 - `trade_params.sizing.mode=target_notional` requires `trade_params.sizing.target_notional`.
 - `trade_params.sizing.mode=risk_budget` requires `trade_params.sizing.target_risk_amount`.
 - `trade_params.sizing.mode=fixed_quantity` requires `trade_params.sizing.target_quantity`.
 - At least one of `trade_params.entry.price.acceptable_range` or `trade_params.execution_constraints.max_slippage_pct` should be present.
+- `trade_params.position_management.allow_add_position=false` requires `trade_params.position_management.max_add_count=0`.
 
 ## AI Assembly Notes
 
