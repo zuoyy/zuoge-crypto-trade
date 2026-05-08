@@ -130,6 +130,29 @@ This keeps the run state machine coherent:
 - Do **not** keep rescanner output as summary-only if downstream steps need executable state.
 - `remaining_count` may count both watchlist and trigger-plan entries; if monitoring needs symbol-level backlog, add a distinct symbol count instead of assuming entry count == symbol count.
 
+## TradePlanSignal Preparation Contract
+
+When upstream code prepares payloads for `scripts/submit_trade_plan_signal.py`, follow `references/trade-plan-signal-parameter-design.md` exactly:
+
+- `created_at` is the UTC payload creation time; `expires_at` is a short signal submission validity window, not the strategy hold time. Keep it after `created_at` and normally 5-30 minutes in the future.
+- `entry.timing.expire_after_seconds` is pending-entry wait time. Do not copy `time_stop.max_holding_minutes * 60` into it.
+- Percent fields are JSON decimal ratios: `0.003` means 0.3%. Convert legacy human-percent workflow values like `0.15`/`2.0` into `0.0015`/`0.02` before submission.
+- `quote_staleness_seconds` should account for observed quote age plus a small execution buffer, instead of a fixed value that can already be stale.
+- Validate generated payloads locally with the submitter before pushing or submitting.
+
+## Repository Maintenance / Git Pull Conflicts
+
+When the user asks to resolve a `git pull`/merge conflict for this skill repo, merge instead of discarding local skill changes:
+
+1. Workdir: `/Users/zuo/.hermes/skills/zuoge-crypto-trade`.
+2. Inspect first: `git status --short`, `git branch --show-current`, `git remote -v`, `git fetch origin main`, then compare `git diff --stat` and `git diff --name-status HEAD..origin/main`.
+3. Remove/generated-cache hygiene before staging: delete `scripts/__pycache__/` and add `.gitignore` entries for `__pycache__/` and `*.py[cod]` if missing.
+4. Safety branch before conflict work: `git branch backup-before-merge-$(date +%Y%m%d-%H%M%S)`.
+5. If local changes are uncommitted: `git stash push -u -m 'local skill changes before origin merge'`, then `git merge --no-ff origin/main`, then `git stash pop`.
+6. Resolve any conflict markers, preserving both remote API/schema updates and local workflow documentation when compatible. Search for `<<<<<<<|=======|>>>>>>>` before committing.
+7. Verify at minimum: `python3 -c "import py_compile; py_compile.compile('scripts/submit_trade_plan_signal.py', doraise=True); print('OK')"`.
+8. Commit merged local+remote result and push: `git add . && git commit -m "Merge remote updates and local workflow docs" && git push origin main`.
+
 ## Reference
 
 - [references/submit-quickstart.md](references/submit-quickstart.md)
