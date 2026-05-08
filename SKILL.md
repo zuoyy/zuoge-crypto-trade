@@ -5,6 +5,12 @@ description: Use this skill to generate, validate, and push Hermes trade-plan si
 
 # Zuoge Crypto Trade
 
+## Architecture Role
+
+`zuoge-crypto-trade` is the **hands** of the trading system. It assembles structured trade-plan payloads and submits them via HTTP to the signal ingestion API. It does NOT discover candidates, evaluate market structure, or decide when to trade — that is the responsibility of `crypto-trader-workflow` (strategy brain). `zuoge-crypto-query` is the eyes that reads state.
+
+Signal submission from `crypto-trader-workflow`'s `crypto_push_signals.py` calls this skill's `scripts/submit_trade_plan_signal.py` directly. Do NOT route manual "what should I trade" questions here; they belong to the workflow brain.
+
 ## Overview
 
 Use this skill when Hermes or OpenClaw needs to turn strategy analysis plus account and position context into a trade-plan signal for the crypto-trader backend.
@@ -74,6 +80,56 @@ A standalone implementation scaffold now exists at `/Users/zuo/.hermes/automatio
 
 Treat this as the isolated working area for crypto-trader signal automation. Prefer it over mixing new logic into the generic `hermes-agent/workflow/` tree.
 
+## Defer Instead of Force
+
+When the workflow finds structure that is interesting but not executable **now**, do not collapse everything into `rejected`.
+Use layered outputs:
+
+1. `plans` — executable now
+2. `watchlist` — structure still valid but confirmation missing
+3. `trigger_plans` — explicit activation criteria required before execution
+4. `rejected` — genuinely invalid / low-quality / untradable
+
+Prefer downgrade over discard for near-miss structures. This is especially important for a structure-first, high-RR workflow where many good trades begin as stalk setups rather than immediate market orders.
+
+Downgrade these reasons before considering full rejection:
+- `book_not_supporting`
+- `directional_book_too_thin`
+- `neutral_probe_too_weak`
+- `inside_4h_range`
+- `inside_1h_midrange`
+- `neutral_probe_too_far_from_trigger`
+
+When `plan_count == 0`, inspect `watchlist.json`, `trigger-plans.json`, and `rejection_stats` before concluding the run produced no useful output.
+
+## Rescan-to-Push State Handoff
+
+When the workflow uses `crypto_rescan_watchlist.py`, the rescanner must not stop at an analytical summary.
+It should emit push-consumable state for the current run.
+
+Required behavior:
+1. Write `rescan-summary.json` with normalized buckets:
+   - `promoted_plans`
+   - `remaining_watchlist`
+   - `remaining_trigger_plans`
+   - `invalidated`
+2. Also write current-run downstream artifacts so later stages do not depend on manual interpretation:
+   - `watchlist.json` from `remaining_watchlist`
+   - `trigger-plans.json` from `remaining_trigger_plans`
+3. `crypto_push_signals.py` should prefer rescanned `promoted_plans` over stale original `plans`.
+4. If the rescan run does not have its own `trade-plans.json`, push should fall back to the `source_run_id` plan artifact for shared context like `macro_risk`, `account_context`, and position-management decisions.
+
+This keeps the run state machine coherent:
+- original run discovers
+- rescan run reclassifies
+- push consumes current truth, not stale pre-rescan truth
+
+## Pitfalls
+
+- Do **not** let push read only `trade-plans.json` from the current rescan run. A pure rescan run may not have that file.
+- Do **not** keep rescanner output as summary-only if downstream steps need executable state.
+- `remaining_count` may count both watchlist and trigger-plan entries; if monitoring needs symbol-level backlog, add a distinct symbol count instead of assuming entry count == symbol count.
+
 ## Reference
 
 - [references/submit-quickstart.md](references/submit-quickstart.md)
@@ -83,4 +139,10 @@ Treat this as the isolated working area for crypto-trader signal automation. Pre
 - [references/payload-template.json](references/payload-template.json)
 - [references/candidate-selection-workflow.zh-CN.md](references/candidate-selection-workflow.zh-CN.md) — 当目标是从市场里找热门/潜力币安合约并进入交易计划流程时，先看这份筛选工作流
 - [references/crypto-candidate-mvp-implementation.zh-CN.md](references/crypto-candidate-mvp-implementation.zh-CN.md) — 本次已落地的 MVP 自动化闭环、代码位置、验证结果与后续强化重点
+- [references/structure-first-hardening-2026-05.zh-CN.md](references/structure-first-hardening-2026-05.zh-CN.md) — 候选池清洗 + 结构优先计划层强化记录：如何先剔除噪音标的，再把 entry/stop 锚到结构触发位与失效位，避免为了出单硬造机会
+- [references/multi-timeframe-structure-upgrade.zh-CN.md](references/multi-timeframe-structure-upgrade.zh-CN.md) — 多周期价格结构增强记录：5m/15m K 线特征如何接入 state / stage / evidence，且不改 signal contract
+- [references/higher-timeframe-hard-gates.zh-CN.md](references/higher-timeframe-hard-gates.zh-CN.md) — 1h/4h 高周期框架升级记录：如何把 HTF 从加分项提升为更强过滤层，并识别 neutral_probe 虚高分问题
+- [references/output-hardening-2026-05.md](references/output-hardening-2026-05.md) — 输出层强化记录：如何把 plan/reject 二元结构升级为 executable + watchlist + trigger-plan + rejection-stats，并调整 neutral_probe 阈值与盘口观察逻辑
+- [references/macro-time-window-gating.zh-CN.md](references/macro-time-window-gating.zh-CN.md) — 宏观事件时间窗风控接入记录：静态事件日历、active window 阻断、filter/plan 双层拦截，以及“新开仓阻断但仓位管理继续运行”的实现细节
+- [references/watchlist-trigger-plan-upgrade-2026-05.md](references/watchlist-trigger-plan-upgrade-2026-05.md) — watchlist / trigger-plan 分层输出升级、验证结果与 neutral_probe 阈值陷阱
 - [references/candidate-selection-workflow.zh-CN.md](references/candidate-selection-workflow.zh-CN.md)
