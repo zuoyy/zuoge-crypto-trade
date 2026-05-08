@@ -6,12 +6,26 @@ import sys
 import urllib.error
 import urllib.request
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 def load_payload(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+FORBIDDEN_REQUEST_FIELDS = {
+    "signal_id",
+    "proposal_id",
+    "trace_id",
+    "status",
+    "inserted_at",
+    "updated_at",
+    "strategy_revision",
+    "allowed_order_types",
+    "submission_channel",
+}
 
 
 def validate_enum(value: object, allowed: set[str], field: str, issues: list[str]) -> None:
@@ -22,16 +36,87 @@ def validate_enum(value: object, allowed: set[str], field: str, issues: list[str
         issues.append(f"{field} must be one of: {values}")
 
 
+def is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def is_positive_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and value > 0
+    return is_number(value) and value > 0
 
 
 def is_non_negative_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and value >= 0
+    return is_number(value) and value >= 0
+
+
+def is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_non_negative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def is_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def parse_utc_datetime(value: object, field: str, issues: list[str]) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        issues.append(f"{field} must be an ISO 8601 UTC timestamp")
+        return None
+    raw = value.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        issues.append(f"{field} must be an ISO 8601 UTC timestamp")
+        return None
+    if parsed.tzinfo is None:
+        issues.append(f"{field} must include timezone, preferably UTC Z")
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def required_object(parent: dict, key: str, field: str, issues: list[str]) -> dict:
+    value = parent.get(key)
+    if not isinstance(value, dict):
+        issues.append(f"{field} must be an object")
+        return {}
+    return value
+
+
+def entry_reference_price(entry: dict) -> float | None:
+    price = entry.get("price", {})
+    trigger = entry.get("trigger", {})
+    if is_positive_number(price.get("limit_price")):
+        return float(price["limit_price"])
+    if is_positive_number(trigger.get("trigger_price")):
+        return float(trigger["trigger_price"])
+    acceptable_range = price.get("acceptable_range")
+    if (
+        isinstance(acceptable_range, dict)
+        and is_positive_number(acceptable_range.get("min"))
+        and is_positive_number(acceptable_range.get("max"))
+    ):
+        return (float(acceptable_range["min"]) + float(acceptable_range["max"])) / 2
+    trigger_range = trigger.get("trigger_range")
+    if (
+        isinstance(trigger_range, dict)
+        and is_positive_number(trigger_range.get("min"))
+        and is_positive_number(trigger_range.get("max"))
+    ):
+        return (float(trigger_range["min"]) + float(trigger_range["max"])) / 2
+    return None
 
 
 def validate(payload: dict) -> list[str]:
     issues = []
+    if not isinstance(payload, dict):
+        return ["payload must be a JSON object"]
+
+    for key in sorted(FORBIDDEN_REQUEST_FIELDS):
+        if key in payload:
+            issues.append(f"{key} is server-owned or unsupported and must not be included")
+
     required = [
         "source",
         "skill_name",
@@ -62,25 +147,53 @@ def validate(payload: dict) -> list[str]:
     )
 
     confidence = payload.get("confidence")
-    if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+    if not is_number(confidence) or confidence < 0 or confidence > 1:
         issues.append("confidence must be a number between 0 and 1")
 
     evidence = payload.get("evidence")
-    if not isinstance(evidence, list) or not evidence:
-        issues.append("evidence must contain at least one item")
+    if not isinstance(evidence, list) or not any(is_non_empty_string(item) for item in evidence):
+        issues.append("evidence must contain at least one non-empty item")
+
+    if not is_non_empty_string(payload.get("signal_reason")):
+        issues.append("signal_reason must be a non-empty string")
+
+    created_at = parse_utc_datetime(payload.get("created_at"), "created_at", issues)
+    expires_at = parse_utc_datetime(payload.get("expires_at"), "expires_at", issues)
+    if created_at and expires_at:
+        if expires_at <= created_at:
+            issues.append("expires_at must be after created_at")
+        if expires_at <= datetime.now(timezone.utc):
+            issues.append("expires_at must be in the future")
 
     if payload.get("position_intent") == "reverse" and not payload.get("replace_existing_position", False):
         issues.append("replace_existing_position must be true when position_intent is reverse")
 
     trade_params = payload.get("trade_params")
     if isinstance(trade_params, dict):
-        entry = trade_params.get("entry", {})
-        exits = trade_params.get("exits", {})
-        sizing = trade_params.get("sizing", {})
-        position_management = trade_params.get("position_management", {})
-        constraints = trade_params.get("execution_constraints", {})
+        for key in ["entry", "exits", "sizing", "position_management", "execution_constraints"]:
+            if key not in trade_params:
+                issues.append(f"trade_params.{key} is required")
 
-        trigger = entry.get("trigger", {})
+        entry = required_object(trade_params, "entry", "trade_params.entry", issues)
+        exits = required_object(trade_params, "exits", "trade_params.exits", issues)
+        sizing = required_object(trade_params, "sizing", "trade_params.sizing", issues)
+        position_management = required_object(
+            trade_params,
+            "position_management",
+            "trade_params.position_management",
+            issues,
+        )
+        constraints = required_object(
+            trade_params,
+            "execution_constraints",
+            "trade_params.execution_constraints",
+            issues,
+        )
+
+        for key in ["trigger", "price", "timing"]:
+            if key not in entry:
+                issues.append(f"entry.{key} is required")
+        trigger = required_object(entry, "trigger", "entry.trigger", issues)
         validate_enum(
             trigger.get("type"),
             {"immediate", "touch_price", "breakout", "pullback_into_range"},
@@ -96,29 +209,34 @@ def validate(payload: dict) -> list[str]:
             elif trigger_range.get("min") >= trigger_range.get("max"):
                 issues.append("entry.trigger.trigger_range.min must be less than max")
 
-        price = entry.get("price", {})
+        price = required_object(entry, "price", "entry.price", issues)
         validate_enum(price.get("order_type"), {"market", "limit"}, "entry.price.order_type", issues)
         if price.get("order_type") == "limit" and not is_positive_number(price.get("limit_price")):
             issues.append("entry.price.limit_price is required when order_type is limit")
 
         acceptable_range = price.get("acceptable_range")
         if acceptable_range is not None:
-            if not is_positive_number(acceptable_range.get("min")) or not is_positive_number(acceptable_range.get("max")):
+            if not isinstance(acceptable_range, dict):
+                issues.append("entry.price.acceptable_range must be an object")
+            elif not is_positive_number(acceptable_range.get("min")) or not is_positive_number(acceptable_range.get("max")):
                 issues.append("entry.price.acceptable_range.min and max must be greater than 0")
             elif acceptable_range.get("min") >= acceptable_range.get("max"):
                 issues.append("entry.price.acceptable_range.min must be less than max")
-        timing = entry.get("timing", {})
-        if not isinstance(timing.get("expire_after_seconds"), int) or timing.get("expire_after_seconds") <= 0:
+        timing = required_object(entry, "timing", "entry.timing", issues)
+        if not is_positive_int(timing.get("expire_after_seconds")):
             issues.append("entry.timing.expire_after_seconds must be greater than 0")
 
-        stop_loss = exits.get("stop_loss", {})
+        for key in ["stop_loss", "take_profit", "trailing_stop", "time_stop"]:
+            if key not in exits:
+                issues.append(f"exits.{key} is required")
+        stop_loss = required_object(exits, "stop_loss", "exits.stop_loss", issues)
         validate_enum(stop_loss.get("mode"), {"price", "percent", "none"}, "exits.stop_loss.mode", issues)
         if stop_loss.get("mode") == "price" and not is_positive_number(stop_loss.get("stop_price")):
             issues.append("exits.stop_loss.stop_price is required when mode is price")
         if stop_loss.get("mode") == "percent" and not is_positive_number(stop_loss.get("loss_pct")):
             issues.append("exits.stop_loss.loss_pct is required when mode is percent")
 
-        take_profit = exits.get("take_profit", {})
+        take_profit = required_object(exits, "take_profit", "exits.take_profit", issues)
         validate_enum(
             take_profit.get("mode"),
             {"fixed_price", "ladder", "none"},
@@ -149,7 +267,9 @@ def validate(payload: dict) -> list[str]:
                 if take_profit.get("mode") == "ladder" and total_close_ratio > 1.0000001:
                     issues.append("exits.take_profit.targets close_ratio sum must be less than or equal to 1")
 
-        trailing_stop = exits.get("trailing_stop", {})
+        trailing_stop = required_object(exits, "trailing_stop", "exits.trailing_stop", issues)
+        if "enabled" not in trailing_stop or not isinstance(trailing_stop.get("enabled"), bool):
+            issues.append("exits.trailing_stop.enabled must be true or false")
         if trailing_stop.get("enabled"):
             validate_enum(
                 trailing_stop.get("activation_mode"),
@@ -176,7 +296,10 @@ def validate(payload: dict) -> list[str]:
             if trailing_stop.get("step_mode") == "step" and not is_positive_number(trailing_stop.get("step_value")):
                 issues.append("exits.trailing_stop.step_value must be greater than 0 when step_mode is step")
 
-        if exits.get("time_stop", {}).get("enabled") and not exits.get("time_stop", {}).get("max_holding_minutes"):
+        time_stop = required_object(exits, "time_stop", "exits.time_stop", issues)
+        if "enabled" not in time_stop or not isinstance(time_stop.get("enabled"), bool):
+            issues.append("exits.time_stop.enabled must be true or false")
+        if time_stop.get("enabled") and not is_positive_int(time_stop.get("max_holding_minutes")):
             issues.append("exits.time_stop.max_holding_minutes is required when time_stop is enabled")
 
         validate_enum(
@@ -206,22 +329,82 @@ def validate(payload: dict) -> list[str]:
         if is_positive_number(sizing.get("target_quantity")) and is_positive_number(sizing.get("max_quantity")) and sizing.get("target_quantity") > sizing.get("max_quantity"):
             issues.append("sizing.target_quantity must be less than or equal to max_quantity")
 
+        margin = trade_params.get("margin")
+        if isinstance(margin, dict):
+            if margin.get("mode") not in {None, "", "cross"}:
+                issues.append("margin.mode must be cross when provided")
+            normalized_intent = payload.get("position_intent") or "open"
+            if is_positive_number(margin.get("leverage")) and normalized_intent not in {"open", "reverse"}:
+                issues.append("margin.leverage is only supported for open or reverse intents")
+        elif margin is not None:
+            issues.append("margin must be an object when provided")
+
         if constraints.get("max_slippage_pct") is not None and not is_non_negative_number(constraints.get("max_slippage_pct")):
             issues.append("execution_constraints.max_slippage_pct must be greater than or equal to 0")
         if constraints.get("min_reward_risk") is not None and not is_non_negative_number(constraints.get("min_reward_risk")):
             issues.append("execution_constraints.min_reward_risk must be greater than or equal to 0")
-        if constraints.get("quote_staleness_seconds") is not None and (not isinstance(constraints.get("quote_staleness_seconds"), int) or constraints.get("quote_staleness_seconds") < 0):
+        if constraints.get("quote_staleness_seconds") is not None and not is_non_negative_int(constraints.get("quote_staleness_seconds")):
             issues.append("execution_constraints.quote_staleness_seconds must be greater than or equal to 0")
         if not is_positive_number(constraints.get("max_slippage_pct")) and acceptable_range is None:
             issues.append("either entry.price.acceptable_range or execution_constraints.max_slippage_pct must be present")
+        for key in [
+            "allow_add_position",
+            "max_add_count",
+            "allow_partial_exit",
+            "allow_reverse_on_opposite_signal",
+            "same_symbol_cooldown_minutes",
+        ]:
+            if key not in position_management:
+                issues.append(f"position_management.{key} is required")
+        for key in ["allow_add_position", "allow_partial_exit", "allow_reverse_on_opposite_signal"]:
+            if key in position_management and not isinstance(position_management.get(key), bool):
+                issues.append(f"position_management.{key} must be true or false")
+        if "max_add_count" in position_management and not is_non_negative_int(position_management.get("max_add_count")):
+            issues.append("position_management.max_add_count must be greater than or equal to 0")
+        if "same_symbol_cooldown_minutes" in position_management and not is_non_negative_int(position_management.get("same_symbol_cooldown_minutes")):
+            issues.append("position_management.same_symbol_cooldown_minutes must be greater than or equal to 0")
         if not position_management.get("allow_add_position", False) and position_management.get("max_add_count", 0) != 0:
             issues.append("position_management.max_add_count must be 0 when allow_add_position is false")
-        if position_management.get("max_add_count", 0) < 0:
-            issues.append("position_management.max_add_count must be greater than or equal to 0")
-        if position_management.get("same_symbol_cooldown_minutes", 0) < 0:
-            issues.append("position_management.same_symbol_cooldown_minutes must be greater than or equal to 0")
         if take_profit.get("mode") == "ladder" and not position_management.get("allow_partial_exit", False):
             issues.append("position_management.allow_partial_exit must be true when take_profit.mode is ladder")
+
+        ref_price = entry_reference_price(entry)
+        side = payload.get("side")
+        if ref_price and side in {"long", "short"}:
+            stop_price = stop_loss.get("stop_price")
+            if stop_loss.get("mode") == "price" and is_positive_number(stop_price):
+                if side == "long" and float(stop_price) >= ref_price:
+                    issues.append("exits.stop_loss.stop_price must be below entry reference price for long positions")
+                if side == "short" and float(stop_price) <= ref_price:
+                    issues.append("exits.stop_loss.stop_price must be above entry reference price for short positions")
+            targets = take_profit.get("targets")
+            if isinstance(targets, list):
+                previous_price = None
+                for idx, target in enumerate(targets):
+                    if not isinstance(target, dict) or not is_positive_number(target.get("price")):
+                        continue
+                    target_price = float(target["price"])
+                    if side == "long" and target_price <= ref_price:
+                        issues.append(f"exits.take_profit.targets[{idx}].price must be above entry reference price for long positions")
+                    if side == "short" and target_price >= ref_price:
+                        issues.append(f"exits.take_profit.targets[{idx}].price must be below entry reference price for short positions")
+                    if take_profit.get("mode") == "ladder" and previous_price is not None:
+                        if side == "long" and target_price < previous_price:
+                            issues.append("exits.take_profit.targets must be ascending for long ladder exits")
+                            break
+                        if side == "short" and target_price > previous_price:
+                            issues.append("exits.take_profit.targets must be descending for short ladder exits")
+                            break
+                    previous_price = target_price
+
+        if price.get("order_type") == "limit" and is_positive_number(price.get("limit_price")) and isinstance(acceptable_range, dict):
+            limit_price = float(price["limit_price"])
+            if payload.get("side") == "long" and is_positive_number(acceptable_range.get("max")) and limit_price > float(acceptable_range["max"]):
+                issues.append("entry.price.limit_price must be less than or equal to acceptable_range.max for long positions")
+            if payload.get("side") == "short" and is_positive_number(acceptable_range.get("min")) and limit_price < float(acceptable_range["min"]):
+                issues.append("entry.price.limit_price must be greater than or equal to acceptable_range.min for short positions")
+    else:
+        issues.append("trade_params must be an object")
 
     return issues
 
